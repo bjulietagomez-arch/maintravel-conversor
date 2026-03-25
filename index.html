@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conversor VSTour — MAINTRAVEL</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="container">
+  <div class="brand-header">
+    <img src="/static/header.png" alt="MAINTRAVEL">
+  </div>
+
+  <div class="card">
+    <div class="steps">
+      <div class="step active" id="s1">Subir archivo</div>
+      <div class="step" id="s2">Configurar</div>
+      <div class="step" id="s3">Descargar</div>
+    </div>
+
+    <div class="section-label">Archivo de VSTour</div>
+    <div class="drop-zone" id="dz">
+      <input type="file" id="fi" accept=".rtf,.txt,.csv">
+      <div class="icon">📂</div>
+      <p><strong>Hacé clic aquí</strong> o arrastrá el archivo</p>
+      <p class="hint">Formatos aceptados: .RTF, .TXT, .CSV</p>
+    </div>
+    <div id="errBox" class="alert alert-error"></div>
+
+    <div class="divider"></div>
+
+    <div id="step2wrap">
+      <div class="section-label">Configuración</div>
+      <div class="form-grid">
+        <div style="grid-column:1/-1">
+          <label>Cliente detectado</label>
+          <input type="text" id="fCliente" readonly placeholder="Se detecta automáticamente">
+        </div>
+        <div>
+          <label>Crédito ($)</label>
+          <input type="number" id="fCredito" value="10000000" min="0" step="100000" oninput="updCredito()">
+          <div class="field-hint">Límite de crédito del cliente</div>
+        </div>
+        <div>
+          <label>Días a vencer</label>
+          <input type="number" id="fDias" value="15" min="1" max="365" oninput="renderTable()">
+          <div class="field-hint">Se suma a la fecha de cada factura</div>
+        </div>
+        <div>
+          <label>Moneda</label>
+          <input type="text" id="fMoneda" value="$" maxlength="5">
+          <div class="field-hint">Símbolo en la columna importe</div>
+        </div>
+      </div>
+      <div class="credito-bar" id="creditoBar" style="display:none">
+        <div class="ci"><div class="ci-label">Crédito Total</div><div class="ci-value" id="ciT">$0</div></div>
+        <div class="ci"><div class="ci-label">Deuda Actual</div><div class="ci-value" id="ciD">$0</div></div>
+        <div class="ci"><div class="ci-label">Crédito Disponible</div><div class="ci-value" id="ciX">$0</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="previewSection">
+    <div class="section-label">Vista previa</div>
+    <div class="legend">
+      <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">Semáforo:</span>
+      <div class="legend-item"><div class="legend-dot" style="background:#FFCCCC"></div>Vencido</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#FFF3CC"></div>Esta semana</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#CCFFCC"></div>Próxima semana o más</div>
+    </div>
+    <div class="preview-box">
+      <div class="preview-head">
+        <span id="pvTitle">ESTADO DE CUENTA</span>
+        <span class="badge" id="pvCount">0 registros</span>
+      </div>
+      <div style="overflow-x:auto;max-height:300px;overflow-y:auto">
+        <table>
+          <thead><tr>
+            <th>FECHA</th><th>COMPROBANTE</th><th>$</th>
+            <th>DESCRIPCIÓN</th><th>PAX</th><th>FILE</th><th>VENCIMIENTO</th>
+          </tr></thead>
+          <tbody id="pvBody"></tbody>
+          <tfoot><tr class="total-row">
+            <td colspan="2" style="text-align:right">TOTAL</td>
+            <td class="num" id="pvTotal"></td>
+            <td colspan="4"></td>
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <button class="btn" id="dlBtn" onclick="download()">⬇️ &nbsp;Descargar Excel</button>
+    <div id="okBox" class="alert alert-ok">✅ ¡Excel descargado! Revisá tu carpeta de descargas.</div>
+  </div>
+
+  <div class="brand-footer">
+    <img src="/static/footer.png" alt="MAINTRAVEL pie">
+  </div>
+</div>
+<script>
+let DATA = null;
+let rawFile = null;
+
+const dz = document.getElementById('dz');
+dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+dz.addEventListener('drop',      e => { e.preventDefault(); dz.classList.remove('drag-over'); loadFile(e.dataTransfer.files[0]); });
+document.getElementById('fi').addEventListener('change', e => loadFile(e.target.files[0]));
+
+function loadFile(file) {
+  if (!file) return;
+  rawFile = file;
+  const fd = new FormData();
+  fd.append('file', file);
+  fetch('/preview', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(d => { if (d.error) { showErr('❌ ' + d.error); return; } DATA = d; showPreview(); hideErr(); })
+    .catch(() => showErr('❌ Error al procesar el archivo.'));
+}
+
+function addDays(dateStr, n) {
+  const [d, m, y] = dateStr.split('/');
+  const dt = new Date(2000 + parseInt(y), parseInt(m) - 1, parseInt(d));
+  dt.setDate(dt.getDate() + n);
+  return dt;
+}
+function fmtD(d) { return String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getFullYear()).slice(2); }
+function fmtM(n) { return n.toLocaleString('es-AR', {minimumFractionDigits:2, maximumFractionDigits:2}); }
+
+function vtoClass(vto) {
+  const now = new Date(); now.setHours(0,0,0,0);
+  const day = now.getDay();
+  const mon = new Date(now); mon.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
+  const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+  if (vto < now)  return 'vto-r';
+  if (vto <= sun) return 'vto-y';
+  return 'vto-g';
+}
+
+function updCredito() {
+  if (!DATA) return;
+  const cred = +document.getElementById('fCredito').value || 0;
+  const tot  = DATA.rows.reduce((s, r) => s + r.monto, 0);
+  const disp = cred - tot;
+  document.getElementById('ciT').textContent = '$' + fmtM(cred);
+  document.getElementById('ciD').textContent = '$' + fmtM(tot);
+  const el = document.getElementById('ciX');
+  el.textContent = '$' + fmtM(disp);
+  el.className   = 'ci-value ' + (disp < 0 ? 'neg' : 'pos');
+}
+
+function renderTable() {
+  if (!DATA) return;
+  const dias  = +document.getElementById('fDias').value || 15;
+  const tbody = document.getElementById('pvBody');
+  tbody.innerHTML = '';
+  let tot = 0;
+  for (const r of DATA.rows) {
+    tot += r.monto;
+    const vto = addDays(r.fecha, dias);
+    const cls = vtoClass(vto);
+    const tr  = document.createElement('tr');
+    tr.innerHTML =
+      '<td class="ctr">' + r.fecha + '</td>' +
+      '<td style="font-size:10px">' + r.comp + '</td>' +
+      '<td class="num' + (r.monto < 0 ? ' neg-val' : '') + '">' + fmtM(r.monto) + '</td>' +
+      '<td>' + r.desc + '</td>' +
+      '<td style="font-size:10px">' + r.pax + '</td>' +
+      '<td class="ctr">' + r.file + '</td>' +
+      '<td class="' + cls + '">' + fmtD(vto) + '</td>';
+    tbody.appendChild(tr);
+  }
+  document.getElementById('pvTotal').textContent = fmtM(tot);
+}
+
+function showPreview() {
+  document.getElementById('fCliente').value = DATA.code + ' ' + DATA.name;
+  document.getElementById('step2wrap').classList.add('active');
+  document.getElementById('previewSection').style.display = 'block';
+  document.getElementById('creditoBar').style.display = 'flex';
+  document.getElementById('pvTitle').textContent = 'CLIENTE: ' + DATA.code + ' ' + DATA.name;
+  document.getElementById('pvCount').textContent = DATA.rows.length + ' registros';
+  document.getElementById('s1').className = 'step done';
+  document.getElementById('s2').className = 'step active';
+  dz.classList.add('file-loaded');
+  dz.querySelector('.icon').textContent = '✅';
+  dz.querySelector('p').innerHTML = '<strong>Archivo cargado correctamente</strong>';
+  dz.querySelector('.hint').textContent = DATA.rows.length + ' registros · ' + DATA.name;
+  renderTable();
+  updCredito();
+}
+
+async function download() {
+  const btn = document.getElementById('dlBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div>&nbsp;Generando Excel…';
+  hideErr();
+  try {
+    const fd = new FormData();
+    fd.append('file',    rawFile);
+    fd.append('credito', document.getElementById('fCredito').value);
+    fd.append('dias',    document.getElementById('fDias').value);
+    const resp = await fetch('/convert', { method: 'POST', body: fd });
+    if (!resp.ok) { const e = await resp.json(); throw new Error(e.error); }
+    const blob = await resp.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    const now  = new Date();
+    const ds   = String(now.getDate()).padStart(2,'0') + String(now.getMonth()+1).padStart(2,'0') + now.getFullYear();
+    const slug = DATA.name.replace(/\s+/g,'_').replace(/[^a-zA-Z0-9_]/g,'').substring(0,20);
+    a.href = url; a.download = 'Estado_de_Cuenta_' + slug + '_' + ds + '.xlsx';
+    a.click(); URL.revokeObjectURL(url);
+    document.getElementById('okBox').style.display = 'block';
+    document.getElementById('s2').className = 'step done';
+    document.getElementById('s3').className = 'step done';
+    setTimeout(() => { document.getElementById('okBox').style.display = 'none'; }, 5000);
+  } catch(e) {
+    showErr('❌ Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '⬇️ &nbsp;Descargar Excel';
+  }
+}
+
+function showErr(m) { const e = document.getElementById('errBox'); e.textContent = m; e.style.display = 'block'; }
+function hideErr()  { document.getElementById('errBox').style.display = 'none'; }
+</script>
+</body>
+</html>
